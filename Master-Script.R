@@ -1,10 +1,10 @@
 ###############################################################################################
 # Investment Strategies / WS 21 / BAB Replication
-# Group: Niklas Leibinger, Elias Schreiber, Yannick Strobl, Nicolas Tschütscher
+# Group 8: Niklas Leibinger, Elias Schreiber, Yannick Strobl, Nicolas Tschütscher
 ###############################################################################################
 
 ##
-# github link: https://github.com/NicolasTsch/Investment-Strategies
+# github link: https://github.com/NicolasTsch/Investment-Strategies-Final
 ##
 
 ##########
@@ -200,8 +200,8 @@ SP500_raw5 <- SP500_raw4 %>% filter(Flag != "NA")
 
 SP500_data <- SP500_raw5 %>%
   dplyr::mutate(Return = log(RI)-lag(log(RI)),                                                      # asset return
-                Inst.rf = Return-TB3M,                                                              # excess return asset
-                Mkt.rf = GSPC.ret - TB3M) %>%                                                       # excess return market
+                Inst.rf = Return-TB3M,                                                              # excess return asset with 3m
+                Mkt.rf = GSPC.ret - TB3M) %>%                                                       # excess return market with 3m
   filter(Mkt.RF != "NA")                                                                            
 
 SP500_final <- SP500_data %>% dplyr::filter (Date >= "1990-01-03")
@@ -262,6 +262,7 @@ names.short.list   <- vector(mode = "list", length = 350)
 i <- 1
 for(i in 1:10){x <- paste("names.PF",i,".list", sep=""); assign(x, vector(mode = "list", length = 350))}
 
+
 #empty beta lists
 i <- 1
 for(i in 1:10){x <- paste("beta.ex",i,".list", sep=""); assign(x, vector(mode = "list", length = 350))}
@@ -305,14 +306,13 @@ while(endp <= as.Date(ult.endp) %m-% months(rebal)){
   #         sd.index = roll_sd(Mkt.RF, width = 250, min_obs = 120),
   #         Marker   = ifelse(!is.na(corr), T, F),
   #         beta     = corr*(sd.inst/sd.index)) %>% filter(Marker == TRUE)
-   
+
   
   #Beta calc: option CAPM estimation
-  data.capm.w1 <- SP500_data_w1 %>%
-    filter(Date>=startp,Date<=endp) %>% na.omit()
-  data.is  <- data.capm.w1 %>% mutate(beta = coef(roll_lm(Mkt.RF, Inst.RF, width =250, intercept = FALSE)), # rolling regression only extract the beta coefficient 
-                                      Marker = ifelse(!is.na(beta), T, F)) %>% filter(Marker == TRUE)
-  
+  data.is  <- SP500_data_w1 %>% filter(Date>=startp,Date<=endp) %>% na.omit() %>%
+    mutate(beta = coef(roll_lm(Mkt.RF, Inst.RF, width =250, intercept = FALSE, min_obs = 120)), # rolling regression only extract the beta coefficient
+            Marker = ifelse(!is.na(beta), T, F)) %>% filter(Marker == TRUE)
+
   ###
   # end of beta estimation selection
   ### 
@@ -868,7 +868,7 @@ import2 <- read_xlsx("Daten/TB and LIBOR.xlsx", sheet="monthly")
 TED.data.raw <- import2 %>% as_tibble() %>% mutate(Date = as.Date(Date)) %>% mutate((across(TB3M:EDL3M,~./100)))
 
 TED.data.raw2 <- TED.data.raw %>%
-  mutate(TED=EDL3M-TB3M,
+  mutate(TED=TB3M-EDL3M,
          TED.lag = lag(TED)) %>%
   filter(Date >= "1995-02-01", Date <= "2021-10-01")
 
