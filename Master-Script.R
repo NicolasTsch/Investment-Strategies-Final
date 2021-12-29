@@ -3,9 +3,9 @@
 # Group 8: Niklas Leibinger, Elias Schreiber, Yannick Strobl, Nicolas Tschütscher
 ###############################################################################################
 
-##
+##########
 # github link: https://github.com/NicolasTsch/Investment-Strategies-Final
-##
+##########
 
 ##########
 # Packages (to be loaded at the beginning!!)
@@ -28,13 +28,21 @@ library(stringi)
 
 
 ###############################################################################################
+# Introduction
+# - This R-file replicates parts of the Frazzini and Pedersen (2014) paper "Betting against beta".
+# - The first part covers the data import and manipulation, then we compute the BAB factor and the portfolios, and finally, we replicate
+# table 3 and parts of table 8 from the paper.
+# - The code is structured with comments accordingly.
+
+
 ####################
 # 1. Data
 ####################
 # Note:
-# - In the following code bits we import the raw data, prepare each dataset to make it survivorship bias free and then combine them 
+# - In the following code bits we import the raw data, prepare the S&P constituents dataset to make it survivorship bias free and then combine them 
 # into one data set
 # - In case this part shall be skipped, the final and complete data set can be loaded in line 207 (but load packages first!)
+# - you may need to change the working directory in the import code bits in case the excel files are saved locally on your computer!
 
 ####################
 # 1.1 Data Import
@@ -44,8 +52,8 @@ library(stringi)
 import1 <- read_xlsx("Daten/TB and LIBOR.xlsx", sheet="daily")
 int.rates <- import1 %>% as_tibble() %>% dplyr::mutate(Date=as.Date(Date),
                                                        across(TB3M:EDL3M,~./100),                  # take the rates as decimals
-                                                       TEDspr = EDL3M - TB3M) %>%                  # calc- TED spread as per definition
-                                        fill(EDL3M, .direction = "down") %>%
+                                                       TEDspr = EDL3M - TB3M) %>%                  # calc. TED spread as per definition
+                                        fill(EDL3M, .direction = "down") %>%                       # filling NA's with previous values
                                         fill(TB3M, .direction = "down")
 
 
@@ -60,13 +68,15 @@ GSPCdaily <- GSPC %>% tk_tbl(rename_index="Date") %>%
   dplyr::select(Date, GSPC.Close, GSPC.ret) %>% na.omit()
 
 
-### Fama French 5 Factors loading 
+### Fama French 5 Factors 
 install.packages("FFdownload")
 library(FFdownload)                                                                                # package from Sebastian
 tempf <- tempfile(fileext = ".RData")
 inputlist <- c("F-F_Research_Data_5_Factors_2x3","F-F_Momentum_Factor")                            # we need the FF5 factors and the momentum factor
 FFdownload(output_file = tempf, inputlist=inputlist)
 load(tempf)
+
+# daily
 
 FF5_daily <- FFdata$`x_F-F_Research_Data_5_Factors`$daily$Temp2 %>%
   tk_tbl(rename_index="Date") %>%
@@ -100,19 +110,17 @@ FF_monthly <- FF5_monthly %>% left_join(MOM_monthly, by="Date")                 
 
 
 ### Load SP500 constituents for each month between 1990-01-01 and 2021-11-01
-constituents_import   <- read_xlsx("Daten/SP500_RI_data.xlsx", sheet = "Constituents")
-constituents_import_2 <- constituents_import[-1,-1]
+const_import   <- read_xlsx("Daten/SP500_data.xlsx", sheet = "Constituents")
+const_import_2 <- const_import[-1,-1]                                                              # remove the first column and row
 
-constituents_vec <- as.vector(as.matrix(constituents_import_2))
-constituents     <- unique(constituents_vec)                                                        # we need the unique constituents list
-constituents_tbl <- as_tibble(constituents)                                                         # Unique constituents in a tibble format
-# Note we also used the unique constituents to retrieve the daily timeseries in reuters
+# Note we retrieved the unique constituents manually in R an inserted them directly into the excel to retrieve the data from Reuters
+# The unique constituents are not needed in any other step here
 
 
 ### Total return data of each constituent between 1990-01-01 and 2021-11-01
-RI_import   <- read_xlsx("Daten/SP500_RI_data.xlsx", sheet = "TS_daily")
-RI_import_2 <- RI_import %>% dplyr::rename(Date = "Name")
-save(RI_import, file="RI_Import.RData")
+returns_import   <- read_xlsx("Daten/SP500_data.xlsx", sheet = "TS_daily")
+returns_import_2 <- returns_import %>% dplyr::rename(Date = "Name")
+# save(returns_import, file="returns_import.RData")
 
 ###############################################################################################
 
@@ -121,8 +129,8 @@ save(RI_import, file="RI_Import.RData")
 ####################
 
 ### names and codes
-names <- colnames(RI_import_2)[-1]                                                                  # get stock names
-codes <- as.vector(RI_import_2[1,-1]) %>% as.character()                                            # get stock codes
+names <- colnames(returns_import_2)[-1]                                                             # get stock names
+codes <- as.vector(returns_import_2[1,-1]) %>% as.character()                                       # get stock codes
 names_code <- as.tibble(cbind(names, codes))                                                        # combine names and codes into a tibble
 colnames(names_code) <- c("Instrument","Code")                                                      # rename column names
 
@@ -134,7 +142,7 @@ names_code$Instrument <- names_code$Instrument %>%
 
 
 ### prepare daily return dataset
-RI_raw <- RI_import_2[-1,]
+RI_raw <- returns_import_2[-1,]
 # Generate right date format and make all prices numeric values 
 RI_raw2 <- RI_raw %>%
   mutate(Date=as.Date(as.numeric(Date), origin = "1899-12-30")) %>%                                 # generate right date format
@@ -148,7 +156,7 @@ RI_raw4 <- RI_raw3[,c(1,5,2,4,3)]                                               
 
 
 ### prepare constituents dataset
-constituents_raw <- constituents_import %>%
+constituents_raw <- const_import %>%
   mutate(Date = as_date(Date), Date_mon = as.yearmon(Date)) %>%
   dplyr::arrange(desc(row_number()))
 
@@ -221,23 +229,23 @@ load("SP500_final.RData")
 # and directly assign them in the respective portfolio (deciles -> 10 portfolios)
 
 # !!! Important note:
-# - There are 4 options for the beta estimation in the while loop
+# - There are 3 options (one with two variants) for the beta estimation in the while loop
 # - The first option is in line with the paper, i.e., the betas are calculated as beta = correlation * (sd instrument / sd index) with
-# a 5 year window for the correlation and a 2 year window for the standard devation. In option 2 and 3 the windows are unified.
-# - Option 4 calculates the betas with a CAPM estimation, as suggested in the critique by Novy-Marx & Velikov (2021)
+# a 5 year window for the correlation and a 1 year window for the standard devation. In option 2 and 3 the windows are unified.
+# - Option 3 has another variant where the betas are calcualted with a CAPM estimation, as suggested in the critique by Novy-Marx & Velikov (2021)
+# - Note: the variants in option 3 should yield the same results!
 # - Before running the while-loop, the relevant code part must be uncommented (the others commented)!!
 ###
 
 
 ## data set prep
 # Dataset for the first while loop (Beta calculation) 
-SP500_data_w1 <- SP500_final %>% mutate(Inst.RF=Return-RF) %>% select(Date, Instrument, Mkt.RF, Inst.RF) #RF from K. French is one-month TBILL
+SP500_data_w1 <- SP500_final %>% mutate(Inst.RF=Return-RF) %>% select(Date, Instrument, Mkt.RF, Inst.RF) #RF from K. French is the one-month TBILL
 # TBill rate for the second while loop (BAB calculation) 
 TBill <- SP500_final %>% ungroup() %>% expand(Date) %>% left_join(SP500_final %>% ungroup() %>% select(Date, RF), by="Date")
 
 
 ### First While-loop: Betas and PF weights
-
 ## Define parameters
 roll  <- 60                                                                      # rolling Window 5 Years
 rebal <- 1                                                                       # rebalance each 30 days (~monthly)
@@ -246,8 +254,8 @@ ult.endp   <- "2021-10-02"                                                      
 w <- 0.6                                                                         # weight for beta shrinkage (same value as used in the paper)
 beta.xs <- 1                                                                     # assumption for cross sectional beta (not 100% correct in this case -> only SP500 and not the whole market)
 
-startp <- as.Date(ult.startp)                                                    # insample start point
-endp   <- as.Date(ult.startp) %m+% months(roll) - 1                              # insample end point
+startp <- as.Date(ult.startp)                                                    # in-sample start point
+endp   <- as.Date(ult.startp) %m+% months(roll) - 1                              # in-sample end point
 
 
 ## create empty lists to store the portfolio constituents and betas at each t
@@ -299,19 +307,19 @@ while(endp <= as.Date(ult.endp) %m-% months(rebal)){
 
   
   #Beta calc: option paper (same horizon 1 year)
-  # data.is <- SP500_data_w1 %>%
-  #   filter(Date>=startp,Date<=endp) %>% na.omit() %>%
-  #  mutate(corr     = roll_cor(Inst.RF, Mkt.RF, width=250, min_obs = 120),     # 1 year window
-  #         sd.inst  = roll_sd(Inst.RF, width = 250, min_obs = 120),            # 1 year window
-  #         sd.index = roll_sd(Mkt.RF, width = 250, min_obs = 120),
-  #         Marker   = ifelse(!is.na(corr), T, F),
-  #         beta     = corr*(sd.inst/sd.index)) %>% filter(Marker == TRUE)
+   data.is <- SP500_data_w1 %>%
+    filter(Date>=startp,Date<=endp) %>% na.omit() %>%
+    mutate(corr     = roll_cor(Inst.RF, Mkt.RF, width=250, min_obs = 120),     # 1 year window
+          sd.inst  = roll_sd(Inst.RF, width = 250, min_obs = 120),            # 1 year window
+          sd.index = roll_sd(Mkt.RF, width = 250, min_obs = 120),
+          Marker   = ifelse(!is.na(corr), T, F),
+          beta     = corr*(sd.inst/sd.index)) %>% filter(Marker == TRUE)
 
   
-  #Beta calc: option CAPM estimation
-  data.is  <- SP500_data_w1 %>% filter(Date>=startp,Date<=endp) %>% na.omit() %>%
-    mutate(beta = coef(roll_lm(Mkt.RF, Inst.RF, width =250, intercept = FALSE, min_obs = 120)), # rolling regression only extract the beta coefficient
-            Marker = ifelse(!is.na(beta), T, F)) %>% filter(Marker == TRUE)
+  #Beta calc: variant CAPM estimation
+  # data.is  <- SP500_data_w1 %>% filter(Date>=startp,Date<=endp) %>% na.omit() %>%
+  #  mutate(beta = coef(roll_lm(Mkt.RF, Inst.RF, width =250, intercept = FALSE, min_obs = 120)), # rolling regression only extract the beta coefficient
+  #          Marker = ifelse(!is.na(beta), T, F)) %>% filter(Marker == TRUE)
 
   ###
   # end of beta estimation selection
@@ -327,13 +335,13 @@ while(endp <= as.Date(ult.endp) %m-% months(rebal)){
   
   
   ## Calculate neccessary input parameters
-  median   <- median(data.beta$beta.s)                                            # Median (cross section)
-  z        <- rank(data.beta$beta.s)                                              # Ranks
-  z.bar    <- mean(z)                                                             # Average rank
-  diff     <- z-z.bar                                                             # difference
-  abs.diff <- abs(z-z.bar)                                                        # Absolute difference between rank and average rank
-  sum      <- sum(abs.diff)                                                       # Sum of absolute differences
-  k        <- rep(2/sum, nrow(data.beta))                                         # Normalizing constant
+  median   <- median(data.beta$beta.s)                                            # median of the cross section
+  z        <- rank(data.beta$beta.s)                                              # rank the instruments according to their beta
+  z.bar    <- mean(z)                                                             # average rank
+  diff     <- z-z.bar                                                             # difference of rank to average rank
+  abs.diff <- abs(z-z.bar)                                                        # absolute difference between rank and average rank
+  sum      <- sum(abs.diff)                                                       # sum of absolute differences
+  k        <- rep(2/sum, nrow(data.beta))                                         # normalizing constant
   
   
   ## Calculate portfolio weights
@@ -343,14 +351,14 @@ while(endp <= as.Date(ult.endp) %m-% months(rebal)){
   data.beta$k        <- k
   
   
-  ## Add two weight columns
+  ## Add two weight columns -> 
   data.beta.2 <- data.beta %>%
-    dplyr::mutate(wH = k*max(diff,0),
+    dplyr::mutate(wH = k*max(diff,0),                                             # max between 0 and the difference in instrument rank and average rank times normalising constant 
                   wL = k*min(diff,0),
-                  wL = wL*(-1),
-                  beta.weighted = ifelse(wH != 0, wH*beta, wL*beta)) %>%         # calc. beta weighted
+                  wL = wL*(-1),                                                   # to get a positive weight
+                  beta.weighted = ifelse(wH != 0, wH*beta, wL*beta)) %>%          # calc. beta weighted
     ungroup() %>%
-    mutate(decile = ntile(beta.s, 10))
+    mutate(decile = ntile(beta.s, 10))                                            # sort into deciles
   
   
   ## Assign into long and short portfolio
@@ -362,13 +370,13 @@ while(endp <= as.Date(ult.endp) %m-% months(rebal)){
   
   
   ## Calculate weight of long and short portfolios
-  beta.H <- 1/beta.short                                                         # calculate the leverage
-  beta.L <- 1/beta.long
+  beta.H <- 1/beta.short                                                         # calculate the leverage needed to achieve a beta of 1 in the short portfolio
+  beta.L <- 1/beta.long                                                          # calculate the leverage needed to achieve a beta of 1 in the long portfolio
   
   
   ## Store calculation results
-  beta.H.list[[i]]        <- beta.H
-  beta.L.list[[i]]        <- beta.L
+  beta.H.list[[i]]        <- beta.H                                              # save the leverage for each time step the high beta portfolio
+  beta.L.list[[i]]        <- beta.L                                              # save the leverage for each time step the low beta portfolio
   weights.long.list[[i]]  <- data.beta.2 %>% filter(Instrument %in% long.instruments) %>% select(Instrument, wL)
   weights.short.list[[i]] <- data.beta.2 %>% filter(Instrument %in% short.instruments) %>% select(Instrument, wH) 
   names.long.list[[i]]    <- long.instruments
@@ -427,7 +435,9 @@ while(endp <= as.Date(ult.endp) %m-% months(rebal)){
   endp <- as.Date(startp) %m+% months(roll)-1
 }
 
-
+# calculate the average amount of dollars we go long the low beta portfolio and short the high beta portfolio
+av.leverage.short <- mean(as.vector(unlist(beta.H.list)))
+av.leverage.long <- mean(as.vector(unlist(beta.L.list)))
 
 
 ### Second while-loop: Calculate BAB Factor
@@ -479,6 +489,7 @@ while(endp <= as.Date(ult.endp)){
   n <- nrow(Date.rf)
   Date.rf <- Date.rf[n,] %>% .$Date
   
+  # take risk free rate
   rf <- TBill %>% filter(Date %in% as.Date(Date.rf)) %>% select(RF) %>% .$RF
   rf <- rf[[1]]
   
@@ -497,7 +508,7 @@ while(endp <= as.Date(ult.endp)){
 
 
 
-### Third while-loop: Add Dates for Performance Measurement -> this part is needed to assign a correct date vector to the calculated BAB factor
+### Third while-loop: Add dates for performance measurement -> this part is needed to assign a correct date vector to the calculated BAB factor
 ## Define parameters
 rebal <- 1                            # Rebalance monthly
 ult.startp <- "1995-01-03"             # First day of Portfolio Optimization
@@ -544,6 +555,7 @@ endp   <- as.Date(ult.startp) %m+% months(rebal) - 1
 
 
 ## create empty lists
+i <- 1
 for (i in 1:10) {x <- paste("PF",i,".list",sep = "");assign(x,vector(mode = "list", length = 350))}
 
 ##  Data for While-loop 4
@@ -616,34 +628,22 @@ while(endp <= as.Date(ult.endp)){
 
 ###############################################################################################
 ####################
-# 3. Replication Part
+# 3. Replication Part (Tables)
 ####################
 
 ### Table 3
-## Get Portfolio Returns
-PF1 <- as.vector(unlist(PF1.list))
-PF2 <- as.vector(unlist(PF2.list))
-PF3 <- as.vector(unlist(PF3.list))
-PF4 <- as.vector(unlist(PF4.list))
-PF5 <- as.vector(unlist(PF5.list))
-PF6 <- as.vector(unlist(PF6.list))
-PF7 <- as.vector(unlist(PF7.list))
-PF8 <- as.vector(unlist(PF8.list))
-PF9 <- as.vector(unlist(PF9.list))
-PF10<- as.vector(unlist(PF10.list))
-
-## Portfolio Returns Dataset
+## Portfolio returns into one dataset
 Output.raw <- Dates
-Output.raw$PF1 <- PF1
-Output.raw$PF2 <- PF2
-Output.raw$PF3 <- PF3
-Output.raw$PF4 <- PF4
-Output.raw$PF5 <- PF5
-Output.raw$PF6 <- PF6
-Output.raw$PF7 <- PF7
-Output.raw$PF8 <- PF8
-Output.raw$PF9 <- PF9
-Output.raw$PF10 <- PF10
+Output.raw$PF1 <- as.vector(unlist(PF1.list))
+Output.raw$PF2 <- as.vector(unlist(PF2.list))
+Output.raw$PF3 <- as.vector(unlist(PF3.list))
+Output.raw$PF4 <- as.vector(unlist(PF4.list))
+Output.raw$PF5 <- as.vector(unlist(PF5.list))
+Output.raw$PF6 <- as.vector(unlist(PF6.list))
+Output.raw$PF7 <- as.vector(unlist(PF7.list))
+Output.raw$PF8 <- as.vector(unlist(PF8.list))
+Output.raw$PF9 <- as.vector(unlist(PF9.list))
+Output.raw$PF10 <- as.vector(unlist(PF10.list))
 
 
 ## 2.3.2 Calculate mean (excess returns) and t-stats
@@ -706,8 +706,7 @@ exc.t   <- c(PF1.t,PF2.t,PF3.t,PF4.t,PF5.t,PF6.t,PF7.t,PF8.t,PF9.t,PF10.t,BAB.t)
 # exc.t.option4 <- exc.t
 
 
-
-## 2.3.3 Ex-ante Betas
+## Ex-ante betas
 beta.ex1 <- mean(as.vector(unlist(beta.ex1.list)))
 beta.ex2 <- mean(as.vector(unlist(beta.ex2.list)))
 beta.ex3 <- mean(as.vector(unlist(beta.ex3.list)))
@@ -719,7 +718,7 @@ beta.ex8 <- mean(as.vector(unlist(beta.ex8.list)))
 beta.ex9 <- mean(as.vector(unlist(beta.ex9.list)))
 beta.ex10 <- mean(as.vector(unlist(beta.ex10.list)))
 
-## Ex-ante Beta vector
+## Ex-ante beta vector
 beta.ex <- c(beta.ex1,beta.ex2,beta.ex3,beta.ex4,beta.ex5,beta.ex6,beta.ex7,beta.ex8,beta.ex9,beta.ex10,0)
 
 ## Also here, save to other vector for option comparison
@@ -733,7 +732,7 @@ beta.ex <- c(beta.ex1,beta.ex2,beta.ex3,beta.ex4,beta.ex5,beta.ex6,beta.ex7,beta
 Output.raw2 <- Output.raw %>% pivot_longer(-Date, names_to = "Portfolio", values_to = "Return")
 
 # add factors
-FF_mon_new <- FF_monthly %>% filter (Date >= "1995-02-01") #load FF_monthly in line 82 ff.
+FF_mon_new <- FF_monthly %>% filter (Date >= "1995-02-01") #load FF_monthly in line 97 ff.
 Date_new <-  Output.raw2 %>% filter(Portfolio != "BAB.ann") %>% dplyr::select(Date) %>% unique() %>% as.vector()
 FF_mon_new <- cbind(FF_mon_new, Date_new)
 FF_mon_new <- FF_mon_new[,-1] %>% dplyr::select(Date,Mkt.RF, SMB, HML, RMW, CMA, RF, Mom)
@@ -748,8 +747,9 @@ Output.raw3 <- Output.raw2 %>%
 # Output.raw3.option4 <- Output.raw3
 
 
+# calculate the volatility of returns
 vola.tmp <- Output.raw3 %>% group_by(Portfolio) %>% dplyr::summarise(vola = sd(Return))
-vola.tmp2 <- vola.tmp[2,]    # rearrange a bit, felt dirty
+vola.tmp2 <- vola.tmp[2,]    # rearrange a bit, felt dirty (otherwise PF10 always comes after PF1)
 vola.tmp3 <- vola.tmp[4:11,]
 vola.tmp4 <- vola.tmp[3,]
 vola.tmp5 <- vola.tmp[1,]
@@ -868,7 +868,7 @@ import2 <- read_xlsx("Daten/TB and LIBOR.xlsx", sheet="monthly")
 TED.data.raw <- import2 %>% as_tibble() %>% mutate(Date = as.Date(Date)) %>% mutate((across(TB3M:EDL3M,~./100)))
 
 TED.data.raw2 <- TED.data.raw %>%
-  mutate(TED=TB3M-EDL3M,
+  mutate(TED=EDL3M-TB3M,
          TED.lag = lag(TED)) %>%
   filter(Date >= "1995-02-01", Date <= "2021-10-01")
 
@@ -881,18 +881,6 @@ summary(lagged.TED)
 change.TED <- lm(BAB ~ delta.TED, data=TED.data %>% na.omit()) 
 summary(change.TED)
 
-
-### optionl: plot of TED spread
-TED.data %>%
-  gather(key,value, EDL3M, TB3M, TED) %>%
-  ggplot(aes(x=Date, y=value, colour=key)) +
-  geom_line()+
-  labs(title="TED-Spread", subtitle = "1995-01-01 to 2021-11-01", x="Date", y="TED Spread (LIBOR-TB3m)")+
-  scale_x_date(date_breaks = "2 year", date_labels = "%Y")#+
-  theme_bw()+
-  My_Theme_BAB
-
-
 ###############################################################################################
 ####################
 # 4. Graphics
@@ -901,8 +889,9 @@ TED.data %>%
 ### BAB Factor
 ## BAB Return Plot
 
-Output.raw3 %>% select(Date, Portfolio, Return) %>% filter(Portfolio == c("BAB","PF1","PF10")) %>% # compare portfolios PF1, PF10, BAB
-    ggplot(aes(x = Date, y = Return))+ # hint: plot the series individually => comment/uncomment the lines
+Output.raw3 %>% select(Date, Portfolio, Return) %>% filter(Portfolio == c("BAB","PF1","PF10")) %>% # compare portfolios PF1, PF10, BAB (you can freely add the portfolios 1-10 and the FF factors)
+    ggplot(aes(x = Date, y = Return))+ 
+  # hint: plot the series individually => comment/uncomment the following lines
     geom_line(y= BAB, color = "red" , size = 0.7)+
     geom_line(y= PF1, color = "red" , size = 0.7)+
     geom_line(y= PF10, color = "blue" , size = 0.7)+
@@ -929,7 +918,7 @@ ggplot(data = Output.raw3 %>% filter(Portfolio == "BAB"), aes(x = BAB))+
   geom_density(color = "black", size = 1, fill="grey")+
   theme_bw()+
   labs(title="BAB Factor Density", subtitle = "1995-01-01 to 2021-11-01", x="Return", y="Density")+
-  stat_function(fun = dnorm,                                                                                    # add a normal distribution for comparison
+  stat_function(fun = dnorm,                                                                  # add a normal distribution for comparison
                 args = list(mean = mean(bab_help),
                             sd = sd(bab_help)),
                 col = "red",
@@ -981,7 +970,7 @@ cum.factors$Mom <- cum.Mom$Mom
 
 ## Plot cummulative Returns
 cum.factors %>%
-  gather(key,value, BAB, PF1, PF10) %>%                                                 # portfolios two to nine are exluded
+  gather(key,value, BAB, PF1, PF10) %>%                               # you can freely add the portfolios 1-10 and the FF factors
          group_by(Portfolio) %>%
   ggplot(aes(x=Date, y=value, colour=key)) +
   geom_line()+
@@ -1007,36 +996,6 @@ data.fig1 %>% filter(Name == "CAPM alpha") %>% select(-BAB) %>% pivot_longer(-Na
   ggplot(aes(x= Name, y=alpha, fill="lightblue")) + 
   geom_col(width=0.7,color='black',fill='steelblue')+
   labs(title="Alphas of beta sorted portfolios", subtitle = "CAPM", x="Portfolio", y="Alpha")+
-  theme_bw()+
-  theme(legend.position="none")
-
-
-# FF3
-data.fig1 %>% filter(Name == "Three-factor alpha") %>% select(-BAB) %>%
-  pivot_longer(-Name, values_to = "alpha", names_to = "Portfolio") %>%
-  ggplot(aes(x=reorder(Portfolio, -alpha), y=alpha, fill="lightblue")) +
-  geom_col(width=0.7,color='darkblue',fill='steelblue')+
-  labs(title="Alphas of beta sorted Portfolios", subtitle = "Fama-French 3 Factor Model", x="Portfolio", y="Alpha")+
-  theme_bw()+
-  theme(legend.position="none")
-
-
-# CF4
-data.fig1 %>% filter(Name == "Four-factor alpha") %>% select(-BAB) %>%
-  pivot_longer(-Name, values_to = "alpha", names_to = "Portfolio") %>%
-  ggplot(aes(x=reorder(Portfolio, -alpha), y=alpha, fill="lightblue")) +
-  geom_col(width=0.7,color='darkblue',fill='steelblue')+
-  labs(title="Alphas of beta sorted Portfolios", subtitle = "Carhart-Fama-French 4 Factor Model", x="Portfolio", y="Alpha")+
-  theme_bw()+
-  theme(legend.position="none")
-
-
-# FF5
-data.fig1 %>% filter(Name == "Five-factor alpha") %>% select(-BAB) %>%
-  pivot_longer(-Name, values_to = "alpha", names_to = "Portfolio") %>%
-  ggplot(aes(x=reorder(Portfolio, -alpha), y=alpha, fill="lightblue")) +
-  geom_col(width=0.7,color='darkblue',fill='steelblue')+
-  labs(title="Alphas of beta sorted Portfolios", subtitle = "Fama-French 5 Factor Model", x="Portfolio", y="Alpha")+
   theme_bw()+
   theme(legend.position="none")
 
