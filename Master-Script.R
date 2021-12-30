@@ -39,10 +39,10 @@ library(stringi)
 # 1. Data
 ####################
 # Note:
-# - In the following code bits we import the raw data, prepare the S&P constituents dataset to make it survivorship bias free and then combine them 
+# - In the following code bits we import the raw data, prepare the S&P 500 constituents dataset to make it survivorship bias free and then combine them 
 # into one data set
-# - In case this part shall be skipped, the final and complete data set can be loaded in line 220 (but load packages first!)
-# - you may need to change the working directory in the import code bits in case the excel files are saved locally on your computer!
+# - In case this part shall be skipped, the final and complete data set can be loaded in line 222 (if downloaded from github)
+# - The working directory may be changed in the import code bits in case the excel/csv files are saved locally on your computer
 
 ####################
 # 1.1 Data Import
@@ -118,7 +118,7 @@ const_import_2 <- const_import[-1,-1]                                           
 
 
 ### Total return data of each constituent between 1990-01-01 and 2021-11-01
-returns_import   <- read_xlsx("Daten/SP500_data.xlsx", sheet = "TS_daily")
+returns_import   <- read_xlsx("Daten/SP500_data.xlsx", sheet = "TS_daily")  #import takes some time
 returns_import_2 <- returns_import %>% dplyr::rename(Date = "Name")
 # save(returns_import, file="returns_import.RData")
 
@@ -156,21 +156,22 @@ RI_raw4 <- RI_raw3[,c(1,5,2,4,3)]                                               
 
 
 ### prepare constituents dataset
-constituents_raw <- const_import %>%
+constituents_raw <- const_import %>%                                                                
   mutate(Date = as_date(Date), Date_mon = as.yearmon(Date)) %>%
-  dplyr::arrange(desc(row_number()))
+  dplyr::arrange(desc(row_number()))                                                                # re-arrange to have min date at top
 
 constituents_raw2 <- constituents_raw %>%
   select(Date, Date_mon) %>%
   left_join(constituents_raw, by=c("Date", "Date_mon")) %>%
   mutate_if(is.numeric, as.character)
 
-colnames(constituents_raw2) <- c("Date", "Date_mon",1:506)                                         # add new columns, no. of stocks in index
+colnames(constituents_raw2) <- c("Date", "Date_mon",1:506)                                         # rename columns to numbers
 
 constituents_raw3 <- constituents_raw2 %>%
-  pivot_longer(-c(Date, Date_mon), names_to = "Flag", values_to = "Code") %>%                      # flag each Instrument
+  pivot_longer(-c(Date, Date_mon), names_to = "Flag", values_to = "Code") %>%                      # bring it into a long format and flag each instrument with a number
   na.omit() %>%
   filter(Code != "NA")
+# -> now we have the constituents in a long format and a column assigning a number to each instrument in the respective date 
 
 
 ####################
@@ -179,7 +180,7 @@ constituents_raw3 <- constituents_raw2 %>%
 
 ### put all date together into one data set
 SP500_raw <- RI_raw4 %>%
-  left_join(constituents_raw3, by=c("Date", "Date_mon","Code")) %>%                                 # join constituents
+  left_join(constituents_raw3, by=c("Date", "Date_mon","Code")) %>%                                 # join flag by code and date
   left_join(GSPCdaily, by = "Date") %>%                                                             # join GSPC: the SP500 index return
   left_join(int.rates %>% select(Date, TB3M, EDL3M, TEDspr), by="Date") %>%                         # join TBILL rate
   left_join(FF_daily, by ="Date") %>%                                                               # add FF5 and momentum factor
@@ -188,18 +189,19 @@ SP500_raw <- RI_raw4 %>%
 # Bring monthly Flag to daily Flag
 SP500_raw2 <- SP500_raw %>%
   group_by(Instrument) %>%
-  mutate(prev_val = Flag, next_val = Flag) %>%
-  fill(prev_val, .direction = "down") %>%
-  fill(next_val, .direction = "up")
+  mutate(prev_val = Flag, next_val = Flag) %>%                                                      # add two new columns and fill them with the respective flags
+  fill(prev_val, .direction = "down") %>%                                                           # fill NA values with the previous flag
+  fill(next_val, .direction = "up")                                                                 # fill NA values with the following flag
+#-> now we see at each date whether the flags are matching, i.e., whether the flag is the same, differing, or NA
 
 SP500_raw3 <- SP500_raw2 %>%
-  mutate(value = ifelse(prev_val == next_val, prev_val, Flag),
+  mutate(value = ifelse(prev_val == next_val, prev_val, Flag),                                      # if the prev_val and next_val are not matching, take the flag, since the flag may change over time
          prev_val = as.numeric(prev_val),
          next_val = as.numeric(next_val),
          value = as.numeric(value))
 
 SP500_raw4 <- SP500_raw3 %>%
-  mutate(value_2 = ifelse(prev_val != "NA" & next_val != "NA", next_val, NA), Flag = value_2) %>%
+  mutate(value_2 = ifelse(prev_val != "NA" & next_val != "NA", next_val, NA), Flag = value_2) %>%   # now mark NA's where both values are NA's
   select(-prev_val, -next_val, -value, -value_2)
 
 # Flag which is not NA defines the assets which are listed in the index
@@ -307,19 +309,19 @@ while(endp <= as.Date(ult.endp) %m-% months(rebal)){
 
   
   #Beta calc: option paper (same horizon 1 year)
-   data.is <- SP500_data_w1 %>%
-    filter(Date>=startp,Date<=endp) %>% na.omit() %>%
-    mutate(corr    = roll_cor(Inst.RF, Mkt.RF, width=250, min_obs = 120),     # 1 year window
-          sd.inst  = roll_sd(Inst.RF, width = 250, min_obs = 120),            # 1 year window
-          sd.index = roll_sd(Mkt.RF, width = 250, min_obs = 120),
-          Marker   = ifelse(!is.na(corr), T, F),
-          beta     = corr*(sd.inst/sd.index)) %>% filter(Marker == TRUE)
+   # data.is <- SP500_data_w1 %>%
+   #  filter(Date>=startp,Date<=endp) %>% na.omit() %>%
+   #  mutate(corr    = roll_cor(Inst.RF, Mkt.RF, width=250, min_obs = 120),     # 1 year window
+   #        sd.inst  = roll_sd(Inst.RF, width = 250, min_obs = 120),            # 1 year window
+   #        sd.index = roll_sd(Mkt.RF, width = 250, min_obs = 120),
+   #        Marker   = ifelse(!is.na(corr), T, F),
+   #        beta     = corr*(sd.inst/sd.index)) %>% filter(Marker == TRUE)
 
   
   #Beta calc: variant CAPM estimation
-  # data.is  <- SP500_data_w1 %>% filter(Date>=startp,Date<=endp) %>% na.omit() %>%
-  #  mutate(beta = coef(roll_lm(Mkt.RF, Inst.RF, width =250, intercept = FALSE, min_obs = 120)), # rolling regression only extract the beta coefficient
-  #          Marker = ifelse(!is.na(beta), T, F)) %>% filter(Marker == TRUE)
+  data.is  <- SP500_data_w1 %>% filter(Date>=startp,Date<=endp) %>% na.omit() %>%
+   mutate(beta = coef(roll_lm(Mkt.RF, Inst.RF, width =250, intercept = FALSE, min_obs = 120)), # rolling regression only extract the beta coefficient
+           Marker = ifelse(!is.na(beta), T, F)) %>% filter(Marker == TRUE)
 
   ###
   # end of beta estimation selection
@@ -731,14 +733,14 @@ beta.ex <- c(beta.ex1,beta.ex2,beta.ex3,beta.ex4,beta.ex5,beta.ex6,beta.ex7,beta
 ## Calculate volatility and standard deviation
 Output.raw2 <- Output.raw %>% pivot_longer(-Date, names_to = "Portfolio", values_to = "Return")
 
-# add factors
+# add monthly FF factors
 FF_mon_new <- FF_monthly %>% filter (Date >= "1995-02-01") #load FF_monthly in line 97 ff.
 Date_new <-  Output.raw2 %>% filter(Portfolio != "BAB.ann") %>% dplyr::select(Date) %>% unique() %>% as.vector()
 FF_mon_new <- cbind(FF_mon_new, Date_new)
 FF_mon_new <- FF_mon_new[,-1] %>% dplyr::select(Date,Mkt.RF, SMB, HML, RMW, CMA, RF, Mom)
 Output.raw3 <- Output.raw2 %>%
   filter(Portfolio != "BAB.ann") %>%
-  left_join(FF_mon_new, by="Date")                                                                        #important: add monthly factors!
+  left_join(FF_mon_new, by="Date")                                              
 
 # option safe
 # Output.raw3.option1 <- Output.raw3
@@ -891,7 +893,7 @@ summary(change.TED)
 
 Output.raw3 %>% select(Date, Portfolio, Return) %>% filter(Portfolio == c("BAB","PF1","PF10")) %>% # compare portfolios PF1, PF10, BAB (you can freely add the portfolios 1-10 and the FF factors)
     ggplot(aes(x = Date, y = Return))+ 
-  # hint: plot the series individually => comment/uncomment the following lines
+  # hint: plot the series individually => comment/uncomment the geom_line functions
     geom_line(y= BAB, color = "red" , size = 0.7)+
     geom_line(y= PF1, color = "red" , size = 0.7)+
     geom_line(y= PF10, color = "blue" , size = 0.7)+
