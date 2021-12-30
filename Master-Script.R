@@ -307,19 +307,19 @@ while(endp <= as.Date(ult.endp) %m-% months(rebal)){
 
   
   #Beta calc: option paper (same horizon 1 year)
-  #  data.is <- SP500_data_w1 %>%
-  #   filter(Date>=startp,Date<=endp) %>% na.omit() %>%
-  #   mutate(corr     = roll_cor(Inst.RF, Mkt.RF, width=250, min_obs = 120),     # 1 year window
-  #         sd.inst  = roll_sd(Inst.RF, width = 250, min_obs = 120),            # 1 year window
-  #         sd.index = roll_sd(Mkt.RF, width = 250, min_obs = 120),
-  #         Marker   = ifelse(!is.na(corr), T, F),
-  #         beta     = corr*(sd.inst/sd.index)) %>% filter(Marker == TRUE)
+   data.is <- SP500_data_w1 %>%
+    filter(Date>=startp,Date<=endp) %>% na.omit() %>%
+    mutate(corr    = roll_cor(Inst.RF, Mkt.RF, width=250, min_obs = 120),     # 1 year window
+          sd.inst  = roll_sd(Inst.RF, width = 250, min_obs = 120),            # 1 year window
+          sd.index = roll_sd(Mkt.RF, width = 250, min_obs = 120),
+          Marker   = ifelse(!is.na(corr), T, F),
+          beta     = corr*(sd.inst/sd.index)) %>% filter(Marker == TRUE)
 
   
   #Beta calc: variant CAPM estimation
-  data.is  <- SP500_data_w1 %>% filter(Date>=startp,Date<=endp) %>% na.omit() %>%
-   mutate(beta = coef(roll_lm(Mkt.RF, Inst.RF, width =250, intercept = FALSE, min_obs = 120)), # rolling regression only extract the beta coefficient
-           Marker = ifelse(!is.na(beta), T, F)) %>% filter(Marker == TRUE)
+  # data.is  <- SP500_data_w1 %>% filter(Date>=startp,Date<=endp) %>% na.omit() %>%
+  #  mutate(beta = coef(roll_lm(Mkt.RF, Inst.RF, width =250, intercept = FALSE, min_obs = 120)), # rolling regression only extract the beta coefficient
+  #          Marker = ifelse(!is.na(beta), T, F)) %>% filter(Marker == TRUE)
 
   ###
   # end of beta estimation selection
@@ -857,7 +857,7 @@ table_3 %>% xtable() %>%
 # table3.option4 <- table_3
 
 # Export Table
-export(table_3, "Table3.4.xlsx")
+export(table_3, "Table3.3.xlsx")
 
 
 
